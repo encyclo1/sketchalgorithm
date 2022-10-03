@@ -15,16 +15,15 @@ using namespace std;
 default_random_engine generator;
 normal_distribution<double> distribution (0, 0.1);
 
-const int N = 2;
-const int ITER = 10;
-const int CROSSBOUND = 100;
-const double majorAxis = 0.75;
-const double minorAxis = 0.75;
-const double PI = 3.14159;
-const double DIST = 36;
-const double THRESHOLD = exp (-majorAxis*majorAxis);
-
+int num = 2;
+int CROSSBOUND = 100;
+double majorAxis = 0.75;
+double minorAxis = 0.75;
+double PI = 3.14159;
+double DIST = 36;
+double THRESHOLD = exp (-majorAxis*majorAxis);
 double epsilon, INF;
+double varX, varY;
 
 vector<double> areas, lengths, angles, eps;
 FILE *out = fopen ("sketch_plot.txt", "w");
@@ -59,7 +58,9 @@ public:
 
 };
 
+Point drone_start_B, drone_start_A;
 vector<Point> gaussianCenter;
+vector<Point> gaussianVar;
 
 class Line {
 
@@ -349,11 +350,13 @@ vector<double> gradient_descent_convex(int id, vector<vector<double> > A, vector
     return z;
 }
 
-double gaussian (Point input, Point center)
+double gaussian (Point input, int gaussianId)
 {
-    double X = input.x - center.x;
-    double Y = input.y - center.y;
-    return exp ( - X * X - Y * Y);
+    double X = input.x - gaussianCenter[gaussianId].x;
+    double Y = input.y - gaussianCenter[gaussianId].y;
+    double varX = gaussianVar[gaussianId].x;
+    double varY = gaussianVar[gaussianId].y;
+    return exp ( - (X * X / (2*varX)) - (Y * Y/(2*varY)));
 }
 
 vector<double> getGaussian (vector<Point> points)
@@ -364,7 +367,7 @@ vector<double> getGaussian (vector<Point> points)
     {
         double sum = 0;
         for (int j = 0; j < gaussianCenter.size(); j++)
-            sum = sum + gaussian (points[i], gaussianCenter[j]);
+            sum = sum + gaussian (points[i], j);
         fval.push_back (sum);
     }
     
@@ -376,6 +379,7 @@ vector<double> get_Gaussian_vector (vector<Point> points, int id)
 {
     vector<double> x;
     vector<double> fval = getGaussian (points);
+    //below is buggy, does not incorporate variance
     x.push_back (-2*(points[1].x-gaussianCenter[id].x) * fval[1]);
     x.push_back (-2*(points[1].y-gaussianCenter[id].y) * fval[1]);
     return x;
@@ -562,11 +566,11 @@ vector<double> gradient_matrix_solver (vector<vector<double> > A, vector<double>
    */
  //   inv = prod (inv, transpose(A));
     vector<double> gradient = prod (inv, b);
-    cout<<gradient[0]<<" gr "<<gradient[1]<<endl;
+  //  cout<<gradient[0]<<" gr "<<gradient[1]<<endl;
     return gradient;
 }
 
-vector<double> gradient_LSQ (vector<Point> points, vector<double> last_gradient, int id)
+vector<double> gradient_LSQ (vector<Point> points)
 {
   //  for (auto P : points)
     //    cout<<P.x<<" P "<<P.y<<endl;
@@ -622,12 +626,10 @@ double getAngle (vector<double> A)
 }
 
 struct PLUME{
-    int num ;
     vector<Ellipse> ovals;
     
     PLUME ()
     {
-        num = 2; //number of ellipses intersecting
     }
     
     int pointinEllipse (Point P, Ellipse oval)
@@ -648,27 +650,27 @@ struct PLUME{
         double sum = 0;
         
         for (int i = 0;i < num; i++){
-            sum = sum + gaussian (P, ovals[i].center);
+            sum = sum + gaussian (P, i);
         }
         
         return sum ;
     }
-    
+  
     CrossData getCross (LineSegment segment, double nabla, double alpha, double dist, int inside)
     {
         Point init = *segment.start;
         Point fini = *segment.end;
         Point curr = init;
         
-        Point motion = PointUtil::vector (nabla + alpha, dist/50);
+        Point motion = PointUtil::vector (nabla + alpha, dist/100);
         
-        for (int i = 0;i < 50; i ++){
+        for (int i = 0;i < 100; i ++){
             curr = curr + motion;
             if (inside && concentration (curr) < THRESHOLD){
-                return CrossData (curr, 0);
+                return CrossData (curr, 1);
             }
             else if (!inside && concentration (curr) > THRESHOLD)
-                return CrossData (curr, 0);
+                return CrossData (curr, 1);
         }
         
        // cout <<"Exception did not cross!"<<endl;
@@ -706,11 +708,11 @@ struct PLUME{
         
      //   cout <<"Exception at crossing! "<<endl;
         return CrossData ( Point (0,0), 0 );
-    }*/
+    }
     double edgeGradient (CrossData P)
     {
         return ovals[P.second].edgeGradient (P.first);
-    }
+    }*/
 };
 
 int currentGaussian1;
@@ -726,7 +728,6 @@ class Drone {
     double distTraversed;
     int currentGaussian;
     vector<Point> polytope;
-    vector<double> last_gradient;
     
     Drone (){}
     Drone (Point P1, Point P2, int in, double nab, bool flag)
@@ -740,9 +741,6 @@ class Drone {
         distTraversed = 0;
         numCross = 0;
         currentGaussian = 0;
-        last_gradient = vector<double> (2,0);
-        last_gradient[0] = 1;
-        last_gradient[1] = 0;
      //   polytope.push_back (position);
     }
     
@@ -772,9 +770,9 @@ class Drone {
         points.push_back (crossingPoint);
         
         swap (points[1], points[2]);
-        int cross = 0;
-        if (abs(crossingPoint.x) > 1e-9 || abs (crossingPoint.y) > 1e-9)
-            cross = 1;
+        int cross = cd.second; //changed to boolean if 1 then crossed, 0 did not cross.
+     //   if (abs(crossingPoint.x) > 1e-9 || abs (crossingPoint.y) > 1e-9)
+       //     cross = 1;
        // if (cross)
         //    cout<<cross<<  " cross "<<crossingPoint.x << " " <<crossingPoint.y<<endl;
         if (cross)
@@ -783,25 +781,19 @@ class Drone {
             inside = inside ^ 1;
            // if (abs(alpha) > epsilon)
              //   cout<<"Testing alpha " << inside<<endl;
-            double actualgradient = plume.edgeGradient (cd);
             vector<double> gradient_vector;
             
           //  if (cd.second != currentGaussian1)
             //    gradient_vector = get_Gaussian_vector( points, cd.second);
            // else
-                gradient_vector = gradient_LSQ (points, last_gradient, cd.second);
+                gradient_vector = gradient_LSQ (points);
             
-            currentGaussian1 = cd.second;
        //     last_gradient = gradient_vector;
        //     Point gradient_shift = PointUtil::vector (1.0/100,1);
        //     last_gradient[0] += gradient_shift.x;
        //     last_gradient[1] += gradient_shift.y;
             double angle = getAngle (gradient_vector);
             
-            Point gradient_shift;
-            gradient_shift = PointUtil::vector (angle + epsilon, 1);
-            last_gradient[0] = gradient_shift.x;
-            last_gradient[1] = gradient_shift.y;
            // if (!callSource)
              //   cout<<"Called from CrossPlume "<<endl;
             
@@ -816,14 +808,11 @@ class Drone {
             gradient = gradient_modulo (gradient);
             
             Point checkPoint = PointUtil::vector (gradient, dist);
-            Point checkPoint2 = PointUtil::vector (actualgradient, dist);
-       //     cout<<"Gradient Comparison "<<actualgradient << " " << gradient<<endl;
-
+           
       //      cout<<"Checkpoint "<<checkPoint.x<<" "<<checkPoint.y<<endl;
 
             checkPoint = crossingPoint + checkPoint;
-            checkPoint2 = crossingPoint + checkPoint2;
-
+           
             
         //    cout<<"Checkpoint "<<checkPoint.x<<" "<<checkPoint.y<<endl;
             
@@ -839,30 +828,27 @@ class Drone {
         //        orient = orient ^ 1;
             
             
-            if (PointUtil::orientation (position, crossingPoint, checkPoint2) != orient)
-                reverse (actualgradient);
-            
             if (PointUtil::orientation (position, crossingPoint, checkPoint) != orient)
                 reverse (gradient);
 
-            angleTurned += changeGradient (nabla + alpha, abs(gradient));
+            angleTurned += changeGradient (nabla + alpha, gradient);
             nabla = gradient;
             
-            if (droneIn && !inside)
-                cout << crossingPoint.x <<  " crossed here "<< crossingPoint.y <<  " " <<droneIn<<" inside: "<<inside<<" "<<actualgradient<<" "<< gradient<< endl;
+        //    if (droneIn && !inside)
+          //          cout << crossingPoint.x <<  " crossed here "<< crossingPoint.y <<  " " <<droneIn<<" inside: "<<inside<<" "<<" "<< gradient<< endl;
          }
         last = position;
         position = nextPosition;
-        if (polytope.size())
+        if (numCross)
             polytope.push_back (position);
-        if (numCross == 1 && cross)
-            polytope.push_back (cd.first);
+      //  if (numCross == 1 && cross)
+        //    polytope.push_back (cd.first);
     
         if (polytope.size() > 1)
         {
             int N = polytope.size();
-            if (droneIn)
-                fprintf (out, "Line (%lf,%lf) (%lf,%lf)\n", polytope[N-2].x, polytope[N-2].y, polytope[N-1].x, polytope[N-1].y);
+       //     if (droneIn)
+         //       fprintf (out, "Line (%lf,%lf) (%lf,%lf)\n", polytope[N-2].x, polytope[N-2].y, polytope[N-1].x, polytope[N-1].y);
             Point currtoinit = polytope.back() - polytope[0];
             return (currtoinit.length() < INF) && (numCross > CROSSBOUND);
         }
@@ -1145,7 +1131,7 @@ double Ellipse::edgeGradient(Point& point) {
     return atan2(-pow(radius_y, 2) * (point.getX()-center.getX()), (pow(radius_x, 2) * (point.getY()-center.getY())));
 }
 
-void Sync (Drone &A, Drone &B, double alpha)
+void Sync (Drone &A, Drone &B, double alpha, double dist, PLUME &plume)
 {
     Point v;
     
@@ -1157,7 +1143,11 @@ void Sync (Drone &A, Drone &B, double alpha)
     Point nextPosition = A.position + v;
     B.last = nextPosition;
     B.position = nextPosition;
+    LineSegment dronemotion = LineSegment (B.last, B.position);
+ //   if (abs(B.nabla - A.nabla) < 1e-9 &&  plume.getCross(dronemotion, B.nabla, alpha, dist, B.inside).second == 1)
+   //     B.inside = B.inside ^ 1;
     B.nabla = A.nabla;
+   // B.inside = A.inside;
     B.polytope.push_back (nextPosition);
     //ignoring angle turned during sync.
     
@@ -1168,6 +1158,32 @@ string check (Point P){
     double A = majorAxis;
     double B = minorAxis;
     return (((P.x * P.x) / (A * A) + (P.y * P.y) / (B*B))  <= 1) ? "Inside " : "Outside ";
+}
+
+
+void print_data(Drone A, Drone B)
+{
+    int numPoints = A.polytope.size();
+    
+    
+    fprintf (out, "Pen b\n");
+    
+    for (int i = 0;i < numPoints; i ++)
+        fprintf (out, "Line (%lf,%lf) (%lf,%lf)\n", A.polytope[i].x, A.polytope[i].y, A.polytope[(i+1)%numPoints].x, A.polytope[(i+1)%numPoints].y);
+  
+    numPoints = B.polytope.size();
+  
+    cout <<numPoints << endl;
+  
+//    fprintf (out, "Ellipse (%lf,%lf) %lf %lf \n", plume.ovals[0].center.x, plume.ovals[0].center.y, R, R/2);
+ //   fprintf (out, "Ellipse (%lf,%lf) %lf %lf \n", plume.ovals[1].center.x, plume.ovals[1].center.y, R, R/2);
+
+    fprintf (out, "Pen r\n");
+    
+    for (int i = 0;i < numPoints; i ++)
+        fprintf (out, "Line (%lf,%lf) (%lf,%lf)\n", B.polytope[i].x, B.polytope[i].y, B.polytope[(i+1)%numPoints].x, B.polytope[(i+1)%numPoints].y);
+  
+    return ;
 }
 
 bool CrossPlume (Drone &A, Drone &B, double alpha, PLUME &plume)
@@ -1181,22 +1197,34 @@ bool CrossPlume (Drone &A, Drone &B, double alpha, PLUME &plume)
     double alphainitial = alpha;
     bool endHere = false;
     
+    int iterate = 1000;
+    
     do{
         endHere = endHere || A.MoveDrone (alpha, epsilon * epsilon, plume, 0);
+     //   B.MoveDrone (alpha, epsilon * epsilon, plume, 0);
         
         if (PointUtil::orientation(A.last, A.position, start_pos) == PointUtil::CLOCKWISE && alpha > 0)
             orient = false ;
         if (PointUtil::orientation(A.last, A.position, start_pos) == PointUtil::COUNTERCLOCKWISE && alpha < 0)
             orient = false ;
-        Sync (A,B,alpha);
+      //  if (crossing == A.inside)
+        //    Sync (A,B,alpha, epsilon * epsilon, plume);
+      //  else
+        //    Sync (A,B,alphainitial, epsilon * epsilon, plume);
+        
         if (alpha > 0)
             alpha += epsilon;
         else
             alpha -= epsilon;
         A.angleTurned += abs (alphainitial);
-        cout << "testing cross plume ... "<< A.position.x << " " << A.position.y << endl;
-   //     cout << "testing cross plume ... "<< B.position.x << " " << B.position.y << endl;
-
+     //   cout << "testing cross plume ... "<< A.position.x << " " << A.position.y << endl;
+     //   cout << "testing cross plume ... "<< B.position.x << " " << B.position.y << endl;
+        iterate--;
+        if (iterate < 0){
+            print_data (A,B);
+            exit (0);
+        }
+       // cout<<crossing<<" "<<A.inside<<" "<<A.droneIn<<endl;
     }while (crossing == A.inside && orient && !endHere);
         
     if (crossing == A.inside && !endHere){
@@ -1235,27 +1263,35 @@ bool CrossPlume (Drone &A, Drone &B, double alpha, PLUME &plume)
             if (d1.length() > epsilon * epsilon)
             {
                 endHere = endHere || A.MoveDrone (0, epsilon*epsilon, plume, 0);
+           //     Sync (A,B,alphainitial, epsilon * epsilon, plume);
+
+            //    B.MoveDrone (0, epsilon * epsilon, plume, 0);
              //   B.MoveDrone (0, epsilon*epsilon, plume);
             }
             else{
                 endHere = endHere || A.MoveDrone (0, d1.length(), plume, 0);
+            //    Sync (A,B,alphainitial, d1.length(), plume);
+
+             //   B.MoveDrone (0, d1.length(), plume, 0);
+
             //    B.MoveDrone (0, d1.length()/2, plume);
             }
             
-            if (abs(A.position.x) > 2 || abs(A.position.y) > 2)
-                break ;
+         //   if (abs(A.position.x) > 2 || abs(A.position.y) > 2)
+           //     break ;
             ++iter;
             if (iter > 10000)
             {
                 cout<<"Iterations exceeding ..."<<endl;
+                print_data(A,B);
                 exit (0);
             }
         //    Sync2 (A,B, alpha);
             //cout << "testing cross plume2 ... "<< A.position.x << " " << A.position.y << endl;
-            cout << "testing cross plume2 ... "<< B.position.x << " " << B.position.y << endl;
+      //      cout << "testing cross plume2 ... "<< B.position.x << " " << B.position.y << endl;
         }
       //  B.nabla = A.nabla;
-        Sync (A,B,alphainitial);
+     //   Sync (A,B,alphainitial, epsilon * epsilon, plume);
     }
     
     return endHere;
@@ -1274,40 +1310,29 @@ double estimateArea (vector<Point> polygon)
     return area ;
 }
 
-void sketch_algorithm ()
+
+void sketch_algorithm (double alpha)
 {
-    
     cout << "Running Sketch Algorithm for Epsilon = " << epsilon << endl;
     
-    Point start_a (0.499992,0.00141421);
-    Point start_b (0.5,0);
-  
-   // Ellipse ell1 (Point (0,0), majorAxis, minorAxis);
+    vector<Ellipse> ell;
     
-    Ellipse ell1 (Point (-2,0), majorAxis, minorAxis);
-    Ellipse ell2 (Point (0,0), majorAxis, minorAxis);
-    
-    gaussianCenter.push_back (ell1.center);
-    gaussianCenter.push_back (ell2.center);
+    for (int i = 0;i < num; i ++)
+        ell.push_back (Ellipse(gaussianCenter[i], majorAxis, minorAxis));
     
     PLUME plume;
     
-    plume.ovals.push_back (ell1);
-    plume.ovals.push_back (ell2);
+    plume.ovals = ell;
    // fprintf (out, "Ellipse (%lf,%lf) %lf %lf ", plume.ovals[0].center.x, plume.ovals[0].center.y, majorAxis, minorAxis);
     
-    Drone B (Point (0,0), Point (0,0), 1, 0, false);
-    Drone A (Point (0,DIST * epsilon), Point (0, DIST * epsilon), 1, 0, true);
+    Drone B (drone_start_B, drone_start_B, 1, 0, false);
+    Drone A (drone_start_A, drone_start_A, 1, 0, true);
     
     int TOKEN = 2;
     
-    double alpha = 0;
-    Point lineA = A.position - start_a;
-    Point lineB = B.position - start_b;
-    
     bool loopEnd = false ;
     
-    fprintf (out, "Pen b\n");
+  //  fprintf (out, "Pen b\n");
     
     
     do{
@@ -1315,22 +1340,24 @@ void sketch_algorithm ()
        
         while ((A.numCross + B.numCross == 0 || 1 == A.inside + B.inside) && !loopEnd)
         {
-            cout << "testing TOKEN ... "<< A.position.x << " "<< A.position.y <<" 1"<<  endl;
-
-            if (abs(A.position.x) > 2 || abs(A.position.y) > 2)
-                break ;
-            
-            if (abs(B.position.x) > 2 || abs(B.position.y) > 2)
-                break ;
-            loopEnd = loopEnd || A.MoveDrone (alpha, epsilon, plume, 1);
-         //   Sync (A,B,alpha);
-            loopEnd = loopEnd || B.MoveDrone (alpha, epsilon, plume, 1);
+         //   cout << "testing TOKEN ... "<< A.position.x << " "<< A.position.y <<" 1"<<  endl;
             ++iter;
             if (iter > 10000)
             {
                 cout<<"Iterations exceeding ..."<<endl;
+                print_data(A,B);
                 exit (0);
             }
+            /*if (abs(A.position.x) > 2 || abs(A.position.y) > 2)
+                break ;
+            
+            if (abs(B.position.x) > 2 || abs(B.position.y) > 2)
+                break ;*/
+            loopEnd = loopEnd || A.MoveDrone (alpha, epsilon, plume, 1);
+      //      if (A.numCross > 1)
+                loopEnd = loopEnd || B.MoveDrone (alpha, epsilon, plume, 1);
+            //   Sync (A,B,alpha);
+            
             
         }
         if (A.inside + B.inside != 1)
@@ -1338,32 +1365,38 @@ void sketch_algorithm ()
             if (A.inside + B.inside == 0)
             {
                 alpha = epsilon;
-                loopEnd = loopEnd || CrossPlume (A,B, alpha, plume);
-                B.nabla = A.nabla;
+            //    B.nabla = A.nabla;
 
+                loopEnd = loopEnd || CrossPlume (A,B, alpha, plume);
+              //  if (A.inside + B.inside == 1)
+                Sync (A,B,alpha, epsilon, plume);
+            
+                    B.nabla = A.nabla;
+              
  //               cout << "testing Sync A... "<< A.position.x << " "<<A.position.y <<" "<<alpha<<" "<<A.nabla<< endl;
  //               cout << "testing Sync B... "<< B.position.x << " "<<B.position.y <<" "<<alpha<<" "<<B.nabla<< endl;
             }
             else
             {
+            //    cout<<"Exception both inside!"<<endl;
+          //      exit(0);
                 alpha = -epsilon;
-                loopEnd = loopEnd || CrossPlume (B,A, alpha, plume);
-                A.nabla = B.nabla;
+        //        Sync (B,A,alpha, epsilon, plume);
+              //  A.nabla = B.nabla;
 
+                loopEnd = loopEnd || CrossPlume (B,A, alpha, plume);
+              //  if (A.inside + B.inside == 1)
+                Sync (B,A,alpha, epsilon, plume);
+
+                    A.nabla = B.nabla;
+                
    //             cout << "testing Sync B... "<< B.position.x << " "<<B.position.y <<" "<<alpha<<" "<<B.nabla<< endl;
    //             cout << "testing Sync A... "<< A.position.x << " "<<A.position.y <<" "<<alpha<<" "<<A.nabla<< endl;
             }
         }
-    //    TOKEN = A.inside + B.inside;
-     //   lineA = A.polytope.back() - A.polytope[0];
-     //   lineB = B.polytope.back() - B.polytope[0];
-      //  cout << "position and nabla "<<A.position.x << " "<< A.position.y << " "<<A.nabla<< endl;
-     //   if (A.polytope.back().x < 2 && A.polytope.back().y < 2 )
-    //    cout << "position of polytope "<<A.polytope.back().x << " "<<A.polytope.back().y << endl;
-     //   cout << lineA.length() << " distance from origin" << endl;
     }while (!loopEnd);
     
-    cout <<"Initial crossing with A is " << A.polytope[0].x << " " << A.polytope[0].y << " " <<lineA.length()<< endl;
+    cout <<"Initial crossing with A is " << A.polytope[0].x << " " << A.polytope[0].y<< endl;
     cout << "angle turned by A is " << " " << A.angleTurned << endl;
     cout << "distance traversed by A is "<< " " << A.distTraversed << endl;
     cout << "area estimated by A is " << " " << estimateArea (A.polytope) << endl;
@@ -1372,35 +1405,59 @@ void sketch_algorithm ()
     angles.push_back (A.angleTurned);
     cout << "actual area is  " << PI * majorAxis * minorAxis << endl;
     
-    int numPoints = B.polytope.size();
+    print_data (A,B);
     
-    cout <<numPoints << endl;
-  
-//    fprintf (out, "Ellipse (%lf,%lf) %lf %lf \n", plume.ovals[0].center.x, plume.ovals[0].center.y, R, R/2);
- //   fprintf (out, "Ellipse (%lf,%lf) %lf %lf \n", plume.ovals[1].center.x, plume.ovals[1].center.y, R, R/2);
-
- /*   fprintf (out, "Pen r\n");
-    
-    for (int i = 0;i < B.polytope.size(); i ++)
-        fprintf (out, "Line (%lf,%lf) (%lf,%lf)\n", B.polytope[i].x, B.polytope[i].y, B.polytope[(i+1)%numPoints].x, B.polytope[(i+1)%numPoints].y);
-    
-    numPoints = A.polytope.size();
-    
-    fprintf (out, "Pen b\n");
-    
-    for (int i = 0;i < A.polytope.size(); i ++)
-        fprintf (out, "Line (%lf,%lf) (%lf,%lf)\n", A.polytope[i].x, A.polytope[i].y, A.polytope[(i+1)%numPoints].x, A.polytope[(i+1)%numPoints].y);
-  */
     return ;
+}
+
+
+void test_infrastructure()
+{
+    double alpha = 0;
+    num = 2;
+    CROSSBOUND = 100;
+    majorAxis = 0.25;
+    minorAxis = 0.25;
+    DIST = sqrt (49);
+    THRESHOLD = exp (-majorAxis*majorAxis);
+    
+    drone_start_B = Point (1,0);
+    drone_start_A = Point (1,DIST * epsilon);
+    
+    gaussianVar.push_back (Point (5,5));
+    gaussianVar.push_back (Point (1,5));
+    
+    gaussianCenter.push_back (Point (-2,0.5));
+    gaussianCenter.push_back (Point (1,0));
+
+
+    cout<<"Initializing test... "<<endl;
+    cout<<"Epsilon "<<epsilon<<endl;
+    cout<<"Initial direction "<<alpha<<endl;
+    cout<<"Number of Gaussians "<<num<<endl;
+    cout<<"Least difference between starting and end point "<<INF<<endl;
+    cout<<"Minimum crossings before checking termination "<<CROSSBOUND<<endl;
+   // cout<<"Major and Minor Axis of Gaussian "<<majorAxis<<" "<<minorAxis<<endl;
+    cout<<"Minimum distance factor between drones and minimum distance "<<DIST<<" " <<DIST * epsilon<<endl;
+    cout<<"Concentration THRESHOLD "<<THRESHOLD<<endl;
+    cout<<"Drone B starting point "<<drone_start_B.x<<" "<<drone_start_B.y<<endl;
+    cout<<"Drone B starting point "<<drone_start_A.x<<" "<<drone_start_A.y<<endl;
+    
+    cout<<"Centers of gaussians "<<endl;
+    
+    for (int i =0 ; i < num; i ++)
+        cout<<gaussianCenter[i].x<<" "<<gaussianCenter[i].y<<endl;
+        
+    sketch_algorithm(alpha);
 }
 
 int main()
 {
     int i = 0;
-    for (epsilon = 0.005; i < 1 ; epsilon += 0.001){
+    for (epsilon = 0.005; i < 20 ; epsilon += 0.001){
         INF = 4 * epsilon;
      //   if (epsilon == 0.007) continue;
-        sketch_algorithm ();
+        test_infrastructure ();
         eps.push_back (epsilon);
         ++i;
     }
