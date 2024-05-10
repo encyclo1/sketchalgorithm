@@ -27,4 +27,5 @@ Summary:
 To run gaussian test cases - compile and run sketchalgorithmautogaussian.cpp and then feed the output to renderfinal.py
 To run polygon test cases - process a polygon image using renderinput.py, copy its output to sketchinput.txt and then compile and run sketchalgorithmfinal.cpp. Then
 feed its output to renderfinal.py
+
 Finally, one can tweak with the epsilon values in the main function however they wish upto the algorithm specifications (see the paper).
