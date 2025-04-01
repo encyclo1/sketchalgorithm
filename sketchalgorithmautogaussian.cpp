@@ -374,6 +374,17 @@ vector<double> getGaussian (vector<Point> points)
     return fval;
 }
 
+//FIXME
+double getGaussian (Point point)
+{
+    double fval;
+    double sum = 0;
+    for (int j = 0; j < gaussianCenter.size(); j++){
+        sum = sum + gaussian (point, j);
+    } 
+    fval = sum;
+    return fval;
+}
 
 vector<double> get_Gaussian_vector (vector<Point> points, int id)
 {
@@ -483,7 +494,9 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
 {
     vector<vector<double> > pseudo_inv = A;
 
+    cout<<"A transpose"<<endl;
     A = prod (transpose(A),A);
+    cout << "Dimensions of A: " << A.size() << " x " << (A.empty() ? 0 : A[0].size()) << endl;
     /*
      Singular Value Decomposition
      */
@@ -493,6 +506,7 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
     equation = polynomial_product (Pair(-1,A[0][0]), Pair(-1,A[1][1]) );
     equation[2] -= (A[1][0] * A[0][1]);
     
+    cout << "Equation is "<< equation[0] << " " << equation[1] << " " << equation[2]<<endl;
     vector<double> eigenvalue = solve (equation);
     
  //   cout<<A[0][0]<<" "<<A[0][1]<<endl;
@@ -502,8 +516,11 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
  //   sort (eigenvalue.begin(), eigenvalue.end());
  //   reverse (eigenvalue.begin(), eigenvalue.end());
     
+    cout << "begin factorizating "<<endl;
+    cout << "eigenvalue size "<<eigenvalue.size()<<endl;
     for (int i = 0; i < eigenvalue.size(); i ++){
         double egval = eigenvalue[i];
+        cout << "egval "<<egval<<endl;
         
   //      cout<<egval<<" egval "<<endl;
         
@@ -524,11 +541,18 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
             cout<<"Negative eigenvalue! "<<eigenvalue[i]<< endl;
             exit(0);
         }
+        cout << "temp "<<temp[0]<<" "<<temp[1]<<endl;
         sigma.push_back (temp);
     }
     
+    cout << "Creating U "<<endl;
+
     U = pseudo_inv;
+    cout << "UV "<<endl;
+    cout << "Dimensions of U: " << U.size() << " x " << (U.empty() ? 0 : U[0].size()) << endl;
+    cout << "Dimensions of V: " << V.size() << " x " << (V.empty() ? 0 : V[0].size()) << endl;
     U = prod (U, V);
+    cout << "UVS"<<endl;
     U = prod (U, sigma);
     
   /*  for (int i = 0;i < 2; i ++){
@@ -540,10 +564,12 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
     
    // U = transpose (U);
    // cout<<sigma[0][0]<<" "<<sigma[1][1]<<endl;
+    cout << "Creating sigma "<<endl;
     for (int i = 0; i < 2; i ++)
         if (abs(sigma[i][i])>0)
             sigma[i][i] = 1/sigma[i][i];
-    
+
+    cout << "Creating pseudo_inv "<<endl;
     pseudo_inv = V;
     pseudo_inv = prod (pseudo_inv, sigma);
     pseudo_inv = prod (pseudo_inv, transpose(U));
@@ -570,6 +596,7 @@ vector<double> gradient_matrix_solver (vector<vector<double> > A, vector<double>
     return gradient;
 }
 
+//TODO: Note assumptions.......
 vector<double> gradient_LSQ (vector<Point> points)
 {
   //  for (auto P : points)
@@ -610,6 +637,219 @@ vector<double> gradient_LSQ (vector<Point> points)
  //   cout << row[1] << " row " << b[1]<<endl;
     return gradient_matrix_solver (A,b);
  //   return gradient_descent_convex (id, A,b, points, fval, last_gradient);
+
+}
+
+
+//FIX ME - COME UP WITH NEW NAME 
+std::vector<double> concentration_gradient_LSQ(
+    std::vector<Point> surroundingPoints,
+    Point& pointToSolve) {
+
+    // Ensure there are at least 3 points (including the point to solve)
+    if (surroundingPoints.size() < 2) {
+        std::cerr << "Insufficient points for gradient calculation." << std::endl;
+        return {};
+    }
+
+    // Extract the coordinates and Gaussian values for the surrounding points
+    double xB = pointToSolve.x;
+    double yB = pointToSolve.y;
+    double fb = getGaussian(pointToSolve);
+
+    std::vector<std::vector<double>> A;
+    std::vector<double> b;
+
+    for (auto& point : surroundingPoints) {
+        double x = point.x;
+        double y = point.y;
+        double f = getGaussian(point);
+
+        // Build the rows of matrix A and vector b
+        A.push_back({x - xB, y - yB});
+        b.push_back(f - fb);
+    }
+    cout << "Dimensions of A_grad: " << A.size() << " x " << (A.empty() ? 0 : A[0].size()) << endl;
+    // Compute the pseudo-inverse of A
+    std::vector<std::vector<double>> A_pinv = get_pseudo_inv(A);
+
+    // Solve for x = A_pinv * b
+    std::vector<double> gradient = prod(A_pinv, b); 
+
+    return gradient;
+}
+
+// Function to compute the Hessian matrix
+std::vector<std::vector<double>> hessian_LSQ(
+    std::vector<Point> surroundingPoints,
+    Point& pointToSolve,
+    std::vector<double>& gradientAtPoint) {
+
+    double xE = pointToSolve.x;
+    double yE = pointToSolve.y;
+    double fxe = gradientAtPoint[0];
+    double fye = gradientAtPoint[1];
+    double fe = getGaussian(pointToSolve);
+
+    if (surroundingPoints.size() < 3) {
+        std::cerr << "Insufficient points for gradient calculation." << std::endl;
+        return {};
+    }
+
+    int numPoints = surroundingPoints.size();
+    std::vector<std::vector<double>> A(numPoints, std::vector<double>(3, 0.0));
+    std::vector<double> b(numPoints, 0.0);
+
+    cout << "Building A and b..." << endl;
+    for (size_t i = 0; i < surroundingPoints.size(); ++i) {
+        double x = surroundingPoints[i].x;
+        double y = surroundingPoints[i].y;
+        double f = getGaussian(surroundingPoints[i]); 
+
+        A[i][0] = std::pow(x - xE, 2) + 1e-9; //adding to prevent divide by zero
+        A[i][1] = (x - xE) * (y - yE) + 1e-9;
+        A[i][2] = std::pow(y - yE, 2) + 1e-9;
+        b[i] = f - fe - fxe * (x - xE) - fye * (y - yE);
+    }
+    cout << "Dimensions of A_H: " << A.size() << " x " << (A.empty() ? 0 : A[0].size()) << endl;
+    // Compute the pseudo-inverse of A
+    cout << "Computing pseudo-inverse..." << endl;
+    std::vector<std::vector<double>> A_pinv = get_pseudo_inv(A); 
+
+    // Solve for x = A_pinv * b
+    cout << "Solving for x..." << endl;
+    std::vector<double> x = prod(A_pinv, b);
+
+    // Construct the Hessian matrix
+    std::vector<std::vector<double>> H(2, std::vector<double>(2, 0.0));
+    H[0][0] = x[0];
+    H[0][1] = x[1];
+    H[1][0] = x[1];
+    H[1][1] = x[2];
+
+    return H;
+}
+
+// Function to calculate curvature
+double calc_curvature(std::vector<double>& g, 
+    std::vector<std::vector<double>>& H) {
+    // Gradient components
+    double Fx = g[0];
+    double Fy = g[1];
+
+    // Hessian components
+    double Fxx = H[0][0];
+    double Fxy = H[0][1];
+    double Fyy = H[1][1];
+
+    // Numerator of the curvature formula
+    double num = -Fy * Fy * Fxx + 2 * Fx * Fy * Fxy - Fx * Fx * Fyy;
+
+    // Denominator of the curvature formula
+    double denom = std::pow(Fx * Fx + Fy * Fy, 1.5);
+
+    // Handle division by zero
+    if (std::abs(denom) < 1e-9) {
+        return NAN;
+    }
+
+    // Return the curvature
+    return num / denom;
+}
+
+// The calc_curvature_LSQ function is a wrapper that calculates 
+// the curvature at a point using LSQ.
+std::pair<std::vector<double>, double> calc_curvature_LSQ(
+    std::vector<Point> surroundingPoints,
+    Point& pointToSolve)
+{
+    // Calculate the gradient at pointB using three points.
+    cout << "Calculating gradient at pointB..." << endl;
+    std::vector<double> gradB = concentration_gradient_LSQ(surroundingPoints, pointToSolve); 
+ 
+    // Calculate the Hessian using nine points, the computed gradient, and the concentration function.
+    cout << "Calculating Hessian..." << endl;
+    std::vector<std::vector<double>> H = hessian_LSQ(surroundingPoints, 
+                                                     pointToSolve, gradB);
+ 
+    // Calculate the curvature based on the gradient and Hessian.
+    cout << "Calculating curvature..." << endl;
+    double curvature = calc_curvature(gradB, H);
+ 
+    // Return the computed gradient and curvature.
+    return std::make_pair(gradB, curvature);
+}
+
+// Helper function to compute numerical gradient
+std::vector<double> compute_gradient(const std::vector<double>& values) {
+    size_t n = values.size();
+    std::vector<double> gradient(n, 0.0);
+
+    if (n < 2) {
+        std::cerr << "Insufficient data points for gradient calculation." << std::endl;
+        return gradient;
+    }
+
+    // Central difference for interior points
+    for (size_t i = 1; i < n - 1; ++i) {
+        gradient[i] = (values[i + 1] - values[i - 1]) / 2.0;
+    }
+
+    // Forward difference for the first point
+    gradient[0] = values[1] - values[0];
+
+    // Backward difference for the last point
+    gradient[n - 1] = values[n - 1] - values[n - 2];
+
+    return gradient;
+}
+
+// Function to compute the difference between consecutive elements
+std::vector<double> compute_diff(const std::vector<double>& values) {
+    size_t n = values.size();
+    std::vector<double> diff(n - 1, 0.0);
+
+    for (size_t i = 0; i < n - 1; ++i) {
+        diff[i] = values[i + 1] - values[i];
+    }
+
+    return diff;
+}
+
+// Function to compute curvature derivatives
+std::vector<double> compute_curvature_derivative(const std::vector<double>& x,
+                                                 const std::vector<double>& y,
+                                                 const std::vector<double>& k) {
+    // Compute gradients
+    std::vector<double> dx = compute_gradient(x);
+    std::vector<double> dy = compute_gradient(y);
+    std::vector<double> dk = compute_gradient(k);
+
+    // Compute ds (arc length differences)
+    std::vector<double> diff_x = compute_diff(x);
+    std::vector<double> diff_y = compute_diff(y);
+    size_t n = diff_x.size();
+    std::vector<double> ds(n, 0.0);
+
+    for (size_t i = 0; i < n; ++i) {
+        ds[i] = std::sqrt(diff_x[i] * diff_x[i] + diff_y[i] * diff_y[i]);
+    }
+
+    // Compute ds_mid (midpoints of ds)
+    std::vector<double> ds_mid(ds.size() + 1, 0.0);
+    ds_mid[0] = ds[0];
+    for (size_t i = 1; i < ds.size(); ++i) {
+        ds_mid[i] = (ds[i - 1] + ds[i]) / 2.0;
+    }
+    ds_mid[ds.size()] = ds[ds.size() - 1];
+
+    // Compute dk_ds
+    std::vector<double> dk_ds(k.size(), 0.0);
+    for (size_t i = 0; i < k.size(); ++i) {
+        dk_ds[i] = dk[i] / ds_mid[i];
+    }
+
+    return dk_ds;
 }
 
 double getAngle (vector<double> A)
@@ -855,6 +1095,23 @@ class Drone {
         else
             return false ;
     }
+};
+
+// TODO
+class DronePair {
+    public:
+        Drone droneA, droneB;
+    
+        DronePair() {}
+        DronePair(Drone droneA, Drone droneB) : droneA(droneA), droneB(droneB) {}
+   
+        // FIXME 
+        bool MovePair(double alpha, double dist, PLUME &plume, int callSource) {
+            bool crossA = droneA.MoveDrone(alpha, dist, plume, callSource); 
+            bool crossB = droneB.MoveDrone(alpha, dist, plume, callSource); 
+    
+            return crossA && crossB;
+        }
 };
 
 Point::Point(double x, double y) : x(x), y(y) {}
@@ -1410,10 +1667,46 @@ void sketch_algorithm (double alpha)
     return ;
 }
 
+void test_gen_sketch_additions(double alpha){
+    cout << "Running Sketch Algorithm for Epsilon = " << epsilon << endl;
+    
+    vector<Ellipse> ell;
+    
+    for (int i = 0;i < num; i ++)
+        ell.push_back (Ellipse(gaussianCenter[i], majorAxis, minorAxis));
+    
+    PLUME plume;
+    
+    plume.ovals = ell;
+   // fprintf (out, "Ellipse (%lf,%lf) %lf %lf ", plume.ovals[0].center.x, plume.ovals[0].center.y, majorAxis, minorAxis);
+    
+    Drone B (drone_start_B, drone_start_B, 1, 0, false);
+    Drone A (drone_start_A, drone_start_A, 1, 0, true);
+
+    //create drone pair
+    DronePair dronePair(A, B);
+    // Generate eight points at equal angular intervals around the starting point
+    vector<Point> points;
+    Point startPoint = A.position; // Starting point of the drone
+    // Generate points at 45-degree intervals (2 * PI / 8)
+    for (int i = 0; i < 8; i++) {
+        points.push_back(Point(startPoint.getX() + alpha*i, startPoint.getY() + alpha*i));
+    }
+
+    for(auto point : points){
+        cout << "Point: (" << point.getX() << ", " << point.getY() << ")" << endl;
+        cout << "Gaussian: " << getGaussian(point) << endl;
+    }
+    // test curvature function
+    cout << "Testing curvature function..." << endl;
+    std::pair<std::vector<double>, double> result = calc_curvature_LSQ(points, startPoint);
+    cout << "Result of curvature function: " << result.first[0] << " " << result.first[1] << " " << result.second << endl;
+
+}
 
 void test_infrastructure()
 {
-    double alpha = 0;
+    double alpha = 0.1;
     num = 2;
     CROSSBOUND = 100;
     majorAxis = 0.25;
@@ -1448,7 +1741,8 @@ void test_infrastructure()
     for (int i =0 ; i < num; i ++)
         cout<<gaussianCenter[i].x<<" "<<gaussianCenter[i].y<<endl;
         
-    sketch_algorithm(alpha);
+    // sketch_algorithm(alpha);
+    test_gen_sketch_additions(alpha);
 }
 
 int main()
