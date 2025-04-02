@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <algorithm>
+#include <Eigen/Dense>
 //#include <gsl/gsl_blas.h>
 //#include <gsl/gsl_linalg.h>
 using namespace std;
@@ -451,42 +452,68 @@ vector<double> solve (vector<double> equation)
     return solutions;
 }
 
-vector<double> polynomial_product (Pair p1, Pair p2){
-    vector<double> result (3,0) ;
-    result[0] = 1;
-    result[1] = -p1.second - p2.second;
-    result[2] = p1.second * p2.second;
-    
-    return result ;
+vector<double> polynomial_product(const vector<double>& p1, const vector<double>& p2) {
+    int degree1 = p1.size();
+    int degree2 = p2.size();
+    vector<double> result(degree1 + degree2 - 1, 0);
+
+    for (int i = 0; i < degree1; ++i) {
+        for (int j = 0; j < degree2; ++j) {
+            result[i + j] += p1[i] * p2[j];
+        }
+    }
+
+    return result;
 }
 
-vector<double> getnullspace (vector<vector<double> > A){
-    double a1, b1, a2, b2;
-    a1 = A[0][0];
-    b1 = A[0][1];
-    a2 = A[1][0];
-    b2 = A[1][1];
-    
+vector<double> getnullspace(vector<vector<double>> A) {
+    int rows = A.size();
+    int cols = A[0].size();
+
+    if (rows != cols || (rows != 2 && rows != 3)) {
+        cerr << "Only 2x2 or 3x3 matrices are supported!" << endl;
+        exit(1);
+    }
+
     vector<double> nullspace;
-    double x=0,y=0;
-    if (abs(b1)>0){
-        y = -a1/b1;
-        x = 1;
-        double norm = sqrt (x*x + y*y);
+
+    if (rows == 2) {
+        double a1 = A[0][0];
+        double b1 = A[0][1];
+        double a2 = A[1][0];
+        double b2 = A[1][1];
+
+        double x = 0, y = 0;
+        if (abs(b1) > 1e-9) {
+            y = -a1 / b1;
+            x = 1;
+        } else if (abs(b2) > 1e-9) {
+            y = -a2 / b2;
+            x = 1;
+        }
+
+        double norm = sqrt(x * x + y * y);
         x /= norm;
         y /= norm;
+
+        nullspace.push_back(x);
+        nullspace.push_back(y);
+    } else if (rows == 3) {
+        Eigen::Matrix<double, 3, 3> M;
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                M(i, j) = A[i][j];
+            }
+        }
+
+        Eigen::FullPivLU<Eigen::Matrix<double, 3, 3>> lu(M);
+        Eigen::Matrix<double, 3, 1> kernel = lu.kernel().col(0);
+
+        for (int i = 0; i < 3; ++i) {
+            nullspace.push_back(kernel(i));
+        }
     }
-    else if (abs(b2) > 0){
-        y = -a2/b2;
-        x = 1;
-        double norm = sqrt (x*x + y*y);
-        x /= norm;
-        y /= norm;
-    }
-    
-    nullspace.push_back (x);
-    nullspace.push_back (y);
-    
+
     return nullspace;
 }
 
@@ -494,20 +521,43 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
 {
     vector<vector<double> > pseudo_inv = A;
 
-    cout<<"A transpose"<<endl;
     A = prod (transpose(A),A);
-    cout << "Dimensions of A: " << A.size() << " x " << (A.empty() ? 0 : A[0].size()) << endl;
     /*
      Singular Value Decomposition
      */
     
     vector<double> equation;
-    
-    equation = polynomial_product (Pair(-1,A[0][0]), Pair(-1,A[1][1]) );
-    equation[2] -= (A[1][0] * A[0][1]);
-    
-    cout << "Equation is "<< equation[0] << " " << equation[1] << " " << equation[2]<<endl;
-    vector<double> eigenvalue = solve (equation);
+    std::vector<double> eigenvalue;
+    if (A.size() == 2) {
+        equation = polynomial_product({-1, A[0][0]}, {-1, A[1][1]});
+        equation[2] -= (A[1][0] * A[0][1]);
+        eigenvalue = solve(equation);
+    } else if (A.size() == 3) {
+        Eigen::Matrix<double, 3, 3> M;
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                M(i, j) = A[i][j];
+            }
+        }
+        Eigen::EigenSolver<Eigen::Matrix<double, 3, 3>> solver(M);
+        Eigen::VectorXcd ev = solver.eigenvalues();
+        // Convert complex eigenvalues to a vector of doubles
+        for (int i = 0; i < ev.size(); ++i) {
+            if (ev[i].imag() < 1e-9) {
+            // If the eigenvalue is real, store the real part
+            eigenvalue.push_back(ev[i].real());
+            } else {
+            // If the eigenvalue is complex, store the magnitude
+            eigenvalue.push_back(std::abs(ev[i]));
+            }
+        }
+    }
+    else
+    {   
+        cout << "Exception! Not 2x2 or 3x3 matrix!"<<endl;
+        exit(0);
+    }
+
     
  //   cout<<A[0][0]<<" "<<A[0][1]<<endl;
  //   cout<<A[1][0]<<" "<<A[1][1]<<endl;
@@ -516,22 +566,21 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
  //   sort (eigenvalue.begin(), eigenvalue.end());
  //   reverse (eigenvalue.begin(), eigenvalue.end());
     
-    cout << "begin factorizating "<<endl;
-    cout << "eigenvalue size "<<eigenvalue.size()<<endl;
     for (int i = 0; i < eigenvalue.size(); i ++){
         double egval = eigenvalue[i];
-        cout << "egval "<<egval<<endl;
         
   //      cout<<egval<<" egval "<<endl;
         
         vector<vector<double> > tonullspace = A;
-        tonullspace[0][0] -= egval;
-        tonullspace[1][1] -= egval;
+        for(int j = 0; j < A.size(); j ++)
+        {
+            tonullspace[j][j] -= egval;
+        }
         
         vector<double> eigenvector = getnullspace (tonullspace);
         V.push_back (eigenvector);
     //    cout<<V[i][0]<<" egvec "<<V[i][1]<<endl;
-        vector<double> temp (2,0);
+        vector<double> temp (A.size(),0);
         if (eigenvalue[i]>=0)
             temp[i] = sqrt (eigenvalue[i]);
         else if (abs(eigenvalue[i]) < 1e-9)
@@ -541,18 +590,12 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
             cout<<"Negative eigenvalue! "<<eigenvalue[i]<< endl;
             exit(0);
         }
-        cout << "temp "<<temp[0]<<" "<<temp[1]<<endl;
         sigma.push_back (temp);
     }
     
-    cout << "Creating U "<<endl;
 
     U = pseudo_inv;
-    cout << "UV "<<endl;
-    cout << "Dimensions of U: " << U.size() << " x " << (U.empty() ? 0 : U[0].size()) << endl;
-    cout << "Dimensions of V: " << V.size() << " x " << (V.empty() ? 0 : V[0].size()) << endl;
     U = prod (U, V);
-    cout << "UVS"<<endl;
     U = prod (U, sigma);
     
   /*  for (int i = 0;i < 2; i ++){
@@ -564,12 +607,12 @@ vector<vector<double> > get_pseudo_inv (vector<vector<double> > A)
     
    // U = transpose (U);
    // cout<<sigma[0][0]<<" "<<sigma[1][1]<<endl;
-    cout << "Creating sigma "<<endl;
-    for (int i = 0; i < 2; i ++)
-        if (abs(sigma[i][i])>0)
-            sigma[i][i] = 1/sigma[i][i];
-
-    cout << "Creating pseudo_inv "<<endl;
+    for (int i = 0; i < 2; i ++){
+        if (abs(sigma[i][i])>0){
+            sigma[i][i] = 1/sigma[i][i] + 1e-9;
+        }
+    }
+        
     pseudo_inv = V;
     pseudo_inv = prod (pseudo_inv, sigma);
     pseudo_inv = prod (pseudo_inv, transpose(U));
@@ -669,7 +712,6 @@ std::vector<double> concentration_gradient_LSQ(
         A.push_back({x - xB, y - yB});
         b.push_back(f - fb);
     }
-    cout << "Dimensions of A_grad: " << A.size() << " x " << (A.empty() ? 0 : A[0].size()) << endl;
     // Compute the pseudo-inverse of A
     std::vector<std::vector<double>> A_pinv = get_pseudo_inv(A);
 
@@ -700,7 +742,6 @@ std::vector<std::vector<double>> hessian_LSQ(
     std::vector<std::vector<double>> A(numPoints, std::vector<double>(3, 0.0));
     std::vector<double> b(numPoints, 0.0);
 
-    cout << "Building A and b..." << endl;
     for (size_t i = 0; i < surroundingPoints.size(); ++i) {
         double x = surroundingPoints[i].x;
         double y = surroundingPoints[i].y;
@@ -711,13 +752,17 @@ std::vector<std::vector<double>> hessian_LSQ(
         A[i][2] = std::pow(y - yE, 2) + 1e-9;
         b[i] = f - fe - fxe * (x - xE) - fye * (y - yE);
     }
-    cout << "Dimensions of A_H: " << A.size() << " x " << (A.empty() ? 0 : A[0].size()) << endl;
     // Compute the pseudo-inverse of A
-    cout << "Computing pseudo-inverse..." << endl;
     std::vector<std::vector<double>> A_pinv = get_pseudo_inv(A); 
 
+    // cout << "solving for x below "<<endl;
+
     // Solve for x = A_pinv * b
-    cout << "Solving for x..." << endl;
+    if (A_pinv[0].size() != b.size()) {
+        cerr << "Matrix dimensions do not match for multiplication!" << endl;
+        cerr << "A_pinv size: " << A_pinv[0].size() << ", b size: " << b.size() << endl;
+        exit(1);
+    }
     std::vector<double> x = prod(A_pinv, b);
 
     // Construct the Hessian matrix
@@ -764,16 +809,13 @@ std::pair<std::vector<double>, double> calc_curvature_LSQ(
     Point& pointToSolve)
 {
     // Calculate the gradient at pointB using three points.
-    cout << "Calculating gradient at pointB..." << endl;
     std::vector<double> gradB = concentration_gradient_LSQ(surroundingPoints, pointToSolve); 
  
     // Calculate the Hessian using nine points, the computed gradient, and the concentration function.
-    cout << "Calculating Hessian..." << endl;
     std::vector<std::vector<double>> H = hessian_LSQ(surroundingPoints, 
                                                      pointToSolve, gradB);
  
     // Calculate the curvature based on the gradient and Hessian.
-    cout << "Calculating curvature..." << endl;
     double curvature = calc_curvature(gradB, H);
  
     // Return the computed gradient and curvature.
@@ -1693,10 +1735,6 @@ void test_gen_sketch_additions(double alpha){
         points.push_back(Point(startPoint.getX() + alpha*i, startPoint.getY() + alpha*i));
     }
 
-    for(auto point : points){
-        cout << "Point: (" << point.getX() << ", " << point.getY() << ")" << endl;
-        cout << "Gaussian: " << getGaussian(point) << endl;
-    }
     // test curvature function
     cout << "Testing curvature function..." << endl;
     std::pair<std::vector<double>, double> result = calc_curvature_LSQ(points, startPoint);
