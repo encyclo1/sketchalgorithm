@@ -888,7 +888,7 @@ std::vector<double> compute_curvature_derivative(const std::vector<double>& x,
     // Compute dk_ds
     std::vector<double> dk_ds(k.size(), 0.0);
     for (size_t i = 0; i < k.size(); ++i) {
-        dk_ds[i] = dk[i] / ds_mid[i];
+        dk_ds[i] = std::pow(dk[i] / ds_mid[i], 2);
     }
 
     return dk_ds;
